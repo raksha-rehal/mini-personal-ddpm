@@ -5,6 +5,27 @@ import torch
 from torch.utils.data import Dataset
 from typing import List, Optional
 import albumentations as A
+import matplotlib.pyplot as plt
+
+def show_multiple_dataset_samples(
+    dataset: Dataset,
+    num_samples: int = 8,
+    title: str = "Dataset samples"
+):
+    fig, axes = plt.subplots(1, num_samples, figsize=(num_samples * 2, 2))
+
+    for i in range(num_samples):
+        x = dataset[i % len(dataset)]
+        x = x.permute(1, 2, 0).numpy()
+        x = np.clip(x, 0, 1)
+
+        axes[i].imshow(x, interpolation="nearest")
+        axes[i].axis("off")
+
+    fig.suptitle(title)
+    plt.tight_layout()
+    plt.show()
+
 
 class ImageFolderDataset(Dataset):
     """
@@ -66,24 +87,49 @@ def to_tensor(image: np.ndarray) -> torch.Tensor:
     image = np.transpose(image, (2, 0, 1))
     return torch.from_numpy(image)
 
-def get_augmentation_pipeline(image_size=(224, 224)) -> A.Compose:
+def get_augmentation_pipeline(image_size=(128, 128)) -> A.Compose:
     return A.Compose([
+        # Resize first to normalize scale
         A.Resize(image_size[0], image_size[1]),
+
+        # Extend background safely before geometry
+        A.PadIfNeeded(
+            min_height=image_size[0],
+            min_width=image_size[1],
+            border_mode=cv2.BORDER_REFLECT_101,
+            p=1.0
+        ),
+
+        # Gentle geometric transforms (NO black fill)
+        A.Affine(
+            scale=(0.97, 1.03),
+            translate_percent=(0.02, 0.02),
+            rotate=(-5, 5),
+            mode=cv2.BORDER_CONSTANT,
+            cval=255,
+            p=0.6
+        ),
+
+        # Crop back to target size
+        A.RandomCrop(image_size[0], image_size[1]),
+
+        # Safe photometric changes
         A.HorizontalFlip(p=0.5),
-        A.RandomBrightnessContrast(p=0.3),
-        A.ShiftScaleRotate(
-            shift_limit=0.05,
-            scale_limit=0.1,
-            rotate_limit=15,
-            p=0.5
+        A.RandomBrightnessContrast(
+            brightness_limit=0.15,
+            contrast_limit=0.15,
+            p=0.3
         ),
     ])
 
 if __name__ == "__main__":
     dataset = ImageFolderDataset(
         root_dir="data_raw",
-        transforms=get_augmentation_pipeline()
+        transforms=get_augmentation_pipeline(image_size=(128, 128))
     )
 
     sample = dataset[0]
     print(sample.shape, sample.dtype)
+
+    # test
+    show_multiple_dataset_samples(dataset, num_samples=8)
